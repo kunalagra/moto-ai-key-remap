@@ -320,6 +320,18 @@ adb shell "settings put system tap_app_quick_double 'intent:#Intent;action=...;e
 Writing the `tap_app_quick_*` keys requires `WRITE_SECURE_SETTINGS` —
 works over ADB without root.
 
+### Take a screenshot (recommended)
+
+ScreenshotTile (NoRoot) v2.21.0+ exposes a secret-gated activity intent
+that captures the foreground app cleanly with no task disturbance.
+See the project README for the full setup.
+
+```bash
+adb shell <<'EOF'
+settings put system tap_app_quick_double 'intent:#Intent;action=com.github.cvzi.screenshottile.TAKE_SCREENSHOT;package=com.github.cvzi.screenshottile;launchFlags=0x10000000;S.secret=YOUR_PASSWORD;end'
+EOF
+```
+
 ### Plain activity-launch intents
 
 ```bash
@@ -333,6 +345,8 @@ adb shell settings put system tap_app_quick_single \
 ```
 
 ### Shortcut-launch intents (reaches non-exported activities)
+
+Useful for invoking shortcuts published by other apps.
 
 ```bash
 adb shell <<'EOF'
@@ -402,7 +416,7 @@ device, with reachability from `tap_app_quick_*` configuration.
 
 | Surface | Component type | Exported? | Gate | Reachable from MyKey config? |
 |---|---|---|---|---|
-| **ScreenshotTile (NoRoot) shortcut** | App shortcut | Manifest-published shortcut | None | ✅ via `com.motorola.mykey.action.SHORTCUT` |
+| **ScreenshotTile `ScreenshotTriggerActivity`** (action `com.github.cvzi.screenshottile.TAKE_SCREENSHOT`) | Activity | Yes | App-defined `secret` extra | ✅ plain `startActivity` — recommended path |
 | `com.motorola.uxcore` `QUICK_LAUNCH` w/ `MOTO_LAUNCH_WITH_SCREENSHOT=true` | Activity | Yes | None | ✅ plain `startActivity` (but opens Moto AI overlay) |
 | `com.android.systemui.screenshot.ScreenshotInputService` | Service | Yes | `com.motorola.permission.TAKE_SCREENSHOT` (signature) | ❌ MyKey doesn't `bindService` from config |
 | `com.android.systemui.screenshot.appclips.AppClipsTrampolineActivity` | Activity | Yes | `LAUNCH_CAPTURE_CONTENT_ACTIVITY_FOR_NOTE` (role) | ❌ MyKey doesn't hold the role permission |
@@ -423,19 +437,21 @@ device, with reachability from `tap_app_quick_*` configuration.
 | `MediaProjection` | API | N/A | Per-session user prompt | ✅ via helper app (annoying UX) |
 | Hidden `ScreenshotHelper.takeScreenshot()` (`com.android.internal.util`) | Class | N/A | Hidden API + signature | ❌ Not callable from non-platform apps |
 
-### Why the SHORTCUT branch is the practical answer
+### Why the activity-intent path is the practical answer
 
 - MyKey only does `startActivity` / `startActivityAsUser` from its
   `launchSpecialApp` dispatch — never `bindService`, never `sendBroadcast`
-  (except for PTT). That immediately eliminates every screenshot surface
-  that's a Service or Receiver.
-- Every screenshot-taking Activity reachable from the manifest (whether
-  AOSP or Moto-extended) is either non-exported, signature-permission
-  protected, or role-protected. None are launchable from a user app.
-- The shortcut path inverts the model: the user app publishes a static
-  shortcut whose intent targets a non-exported activity in its own
-  package. `LauncherApps.startShortcut()` grants the temporary launch
-  permission. MyKey can call it because it holds `ACCESS_SHORTCUTS`.
+  (except for PTT). That eliminates every screenshot surface that's a
+  Service or Receiver.
+- Every *stock* screenshot-taking Activity reachable from the manifest
+  (whether AOSP or Moto-extended) is either non-exported,
+  signature-permission protected, or role-protected. None are launchable
+  from a user app.
+- ScreenshotTile (NoRoot) closes the gap by exposing a dedicated
+  `ScreenshotTriggerActivity` — exported with an app-defined `secret`
+  extra, calling the same `App.screenshot()` path used by its Quick
+  Settings tile. MyKey's plain `startActivity` reaches it cleanly,
+  with no task-stack disturbance.
 
 ### Apps known to publish useful shortcuts on Moto
 
