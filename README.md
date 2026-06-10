@@ -165,6 +165,7 @@ Result: clean capture of the originating app with the standard screenshot UI, no
 |---|---|
 | `com.github.cvzi.screenshottile.SCREENSHOT` broadcast | Reachable in principle, but MyKey only does `startActivity`, never `sendBroadcast`. |
 | Direct bind to `com.android.systemui.screenshot.ScreenshotInputService` | The right primitive, but MyKey can't `bindService` from config — only patching MyKey itself reaches it. |
+| Piggyback on Moto Actions' internal screenshot pipeline (3-finger swipe, **back-tap "Take Screenshot"**, and vol-down long-press all converge on its `TakeScreenshotService` via `N5.c.T()`) | The service is `exported="false"` and the `ScreenshotInputService` bind it does is signature-locked — reachable only from inside Moto Actions itself. Side note: if you'd rather not use the AI Key at all, enabling **back-tap → "Take Screenshot"** in the Moto Actions app is a fully working native screenshot gesture (no ScreenshotTile, no ADB) — just a different ergonomic. |
 | Make ScreenshotTile the device Voice Assistant (`MyVoiceInteractionService`) | Works perfectly, but takes over long-press-home, the power-button assist option, and every other system assist gesture. Too invasive. |
 | Remap the AI Key keycode at the kernel layer | Needs root — Motorola's framework consumes the press before it reaches app-level dispatch. |
 

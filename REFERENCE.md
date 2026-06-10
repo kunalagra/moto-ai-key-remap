@@ -360,21 +360,9 @@ Enumerate available shortcuts on the device:
 adb shell dumpsys shortcut | grep -B1 "ShortcutInfo "
 ```
 
-### Special intent actions
+### Special intent actions and Moto-preloaded intents
 
-```bash
-# Play/pause music (no app launched)
-adb shell settings put system tap_app_quick_single \
-  'intent:#Intent;action=com.motorola.mykey.action.MUSIC;end'
-
-# Start screen recording via SystemUI
-adb shell settings put system tap_app_quick_press_hold \
-  'intent:#Intent;action=com.android.systemui.screenrecord.START;end'
-
-# Moto AI "Catch Up" (only works if com.motorola.uxcore is installed)
-adb shell settings put system tap_app_quick_press_hold \
-  'intent:#Intent;launchFlags=0x00040000;package=com.motorola.uxcore;action=com.motorola.uxcore.action.QUICK_LAUNCH;B.MOTO_LAUNCH_WITH_SCREENSHOT=true;end'
-```
+For runtime-recognized action strings (music play/pause, screen recording, shortcuts, MDM) and Motorola's pre-baked intent URIs (Camera, Catch Me Up, Pay Attention, Ready For, Google Wallet, China-only Alipay/WeChat/AMap/Le Voice/Moto CN Wallet), see [Preloaded intents and constants in MyKey](#preloaded-intents-and-constants-in-mykey) below.
 
 ### Gesture enable/disable + block-in-landscape
 
@@ -402,6 +390,117 @@ adb shell settings put system is_block_trigger 1      # block when landscape
   done
 } > mykey_backup.sh && chmod +x mykey_backup.sh
 ```
+
+### Preloaded intents and constants in MyKey
+
+Source: `MotoMyKey/smali/com/motorola/mykey/bean/PreloadConstant.smali` (preloaded URIs) and `MotoMyKey/smali/com/motorola/mykey/service/MyKeyTriggerService.smali` (runtime-special dispatch actions).
+
+Anything marked **China-only** depends on Lenovo/China app variants and `leapp://` deep links that don't resolve outside CN MyKey builds.
+
+#### Sentinel strings (not intent URIs — special-cased at trigger time)
+
+| Constant | Value | Effect |
+|---|---|---|
+| `DO_NOT_DISTURB` | `do_not_disturb` | Toggle Do Not Disturb. Hardcoded sentinel checked **only** in the double-press handler (`MyKeyTriggerService.smali:1667`). On other gestures, dispatch fails because the string isn't a valid intent URI. |
+| `NONE_REMINDER_INTENT` | `0` | "None / no-op" sentinel. Works on any gesture. Empty string (`""`) is treated identically. |
+| `DIGITAL_ASSISTANT_PACKAGE` | `Digital_Assistant` | Label/marker stored in SharedPreferences when the user picks "Digital Assistant" in the UI. **Not** an intent — used for candidate-name resolution, not dispatched. |
+| `POWER_MENU_PACKAGE` | `Power_menu` | Same — label for "Power menu" candidate. Not dispatched as a value. |
+
+#### Special dispatch actions (runtime-recognized inside `launchSpecialApp`)
+
+These are intent **actions** that MyKey diverts away from the default `startActivity` path. Set the value to any well-formed intent URI carrying one of these actions to trigger the corresponding handler. Source: `MyKeyTriggerService.smali:2537–2601`.
+
+| Action | Effect | Example value |
+|---|---|---|
+| `com.motorola.mykey.action.MUSIC` | Play/pause via media-key broadcast — no app launches | `intent:#Intent;action=com.motorola.mykey.action.MUSIC;end` |
+| `com.motorola.mykey.action.SHORTCUT` | Launch a registered launcher shortcut via `LauncherApps.startShortcut()` — required extras `shortcut_package_name` and `shortcut_id` (see [Shortcut-launch intents](#shortcut-launch-intents-reaches-non-exported-activities) above) | `intent:#Intent;action=com.motorola.mykey.action.SHORTCUT;S.shortcut_package_name=<pkg>;S.shortcut_id=<id>;end` |
+| `com.motorola.cn.mykey.action.SHORTCUT` | China-build alias of the above | (same shape) |
+| `com.android.systemui.screenrecord.START` | Open SystemUI's screen-record permission dialog → user taps Start | `intent:#Intent;action=com.android.systemui.screenrecord.START;end` |
+| `com.android.systemui.screenrecord.REAL.START` | Start screen recording immediately without the permission prompt (signature-protected) | `intent:#Intent;action=com.android.systemui.screenrecord.REAL.START;end` |
+| `action_enterprise` | MDM-forced action; not user-settable in practice — MyKey writes this when an MDM restriction is active | _(set by MDM, not by users)_ |
+
+#### Moto first-party app intents
+
+| Constant | Value | What it does |
+|---|---|---|
+| `MOTO_CAMERA_INTENT` | `intent:#Intent;action=android.intent.action.MAIN;launchFlags=0x4000000;package=com.motorola.camera3;component=com.motorola.camera3/com.motorola.camera.Camera;end` | Legacy Moto Camera (`camera3` package) |
+| `MOTO_CAMERA_INTENT5` | `intent:#Intent;action=android.media.action.STILL_IMAGE_CAMERA;launchFlags=0x4000000;package=com.motorola.camera5;component=com.motorola.camera5/com.motorola.camera.Camera;end` | Current Moto Camera (`camera5`) — opens directly in still-image mode |
+| `MOTO_CAMERA_INTENT5_PREV` | `intent:#Intent;action=android.intent.action.MAIN;launchFlags=0x4000000;package=com.motorola.camera5;component=com.motorola.camera5/com.motorola.camera.Camera;end` | Moto Camera 5, MAIN action (older variant of the above) |
+| `CATCH_ME_UP_INTENT` | `intent:#Intent;action=com.motorola.uxcore.action.MOTO_AI_HERO_ACTION;launchFlags=0x10008000;S.key_extra_moto_ai=category_llm_summarize;end` | Moto AI "Catch Me Up" — opens Moto AI with the LLM-summarize category. Requires `com.motorola.uxcore` installed |
+| `PAY_ATTENTION_INTENT` | `intent:#Intent;action=com.motorola.journal.AUTO_RECORD_TRANSCRIBE_SUMMARIZE;launchFlags=0x10008000;component=com.motorola.journal/.AliasJournalNotesActivity;i.extra_ai_note_type=1;S.android.intent.extra.PACKAGE_NAME=com.motorola.mykey;S.extra_pkb_category=pay%20attention;end` | Moto Journal "Pay Attention" — auto record/transcribe/summarize. Requires `com.motorola.journal` |
+| `PAY_ATTENTION_INTENT2` | _(identical to `PAY_ATTENTION_INTENT`)_ | Alias kept for backward-compat resolution paths |
+| `READY_FOR_INTENT` | `intent:#Intent;action=com.motorola.mobiledesktop.action.PC_PANEL_SETTING;end` | Open Ready For / Smart Connect PC panel settings |
+| `MOTO_INTENT` | `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x10000000;package=com.motorola.moto;component=com.motorola.moto/com.motorola.assist.LauncherActivity;i.extra_user_id=0;end` | Open the Moto app (features hub) |
+
+#### Google integrations
+
+| Constant | Value | What it does |
+|---|---|---|
+| `GOOLGE_WALLET_INTENT` | `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x10000;package=com.google.android.apps.walletnfcrel;end` | Open Google Wallet (rest-of-world) |
+| `GOOLGE_WALLET_INTENT_GAP` | `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x14000000;package=com.google.android.apps.nbu.paisa.user;component=com.google.android.apps.nbu.paisa.user/com.google.nbu.paisa.flutter.gpay.app.LauncherActivity;end` | Open Google Pay (India / NBU) |
+
+(typo in upstream constant names: `GOOLGE` is how Motorola spelled it; preserved here for searchability.)
+
+#### China-only intents
+
+These use Lenovo/Alipay/WeChat-China deep-link schemes and rely on the China MyKey build (`com.motorola.cn.mykey`) plus the Lenovo Le-Store. **Will not resolve on global builds** even if the target app is installed, because they go through the Le-Store fallback when the deep-link host is unavailable.
+
+| Constant | Value | What it does |
+|---|---|---|
+| `ALI_PAY_HEALTH_CODE_INTENT` | `intent://platformapi/startapp?appId=68687564&chInfo=ch_lenovo_shortcut&sceneCode=KF_CHANGSHANG&shareUserId=2088732769619495&partnerId=ch_lenovo_shortcut&pikshemo=YES#Intent;scheme=alipays;launchFlags=0x4000000;package=com.eg.android.AlipayGphone;end` | Alipay Health Code mini-program |
+| `ALI_PAY_PAYMENT_CODE_INTENT` | `intent://platformapi/startapp?appId=20000056&chInfo=ch_lenovo_shortcut&sceneCode=KF_CHANGSHANG&shareUserId=2088732769619495&partnerId=ch_lenovo_shortcut&pikshemo=YES#Intent;scheme=alipays;launchFlags=0x4000000;package=com.eg.android.AlipayGphone;end` | Alipay Payment Code (pay-by-QR) |
+| `ALI_PAY_SCAN_CODE_INTENT` | `intent://platformapi/startapp?appId=10000007&chInfo=ch_lenovo_shortcut&sceneCode=KF_CHANGSHANG&shareUserId=2088732769619495&partnerId=ch_lenovo_shortcut&pikshemo=YES#Intent;scheme=alipays;launchFlags=0x4000000;package=com.eg.android.AlipayGphone;end` | Alipay Scan-and-Pay |
+| `AMAP_INTENT` | `intent://drive/takeTaxi?sourceApplication=lenovo&clearStack=1#Intent;scheme=amapuri;launchFlags=0x4000000;end` | AMap (Gaode Maps) — "take taxi" flow |
+| `WECHAT_SCAN_CODE_INTENT` | `intent:#Intent;launchFlags=0x14000000;component=com.tencent.mm/.ui.LauncherUI;B.LauncherUI.From.Scaner.Shortcut=true;package=com.tencent.mm;launchFlags=0x4000000;end` | WeChat Scan-QR shortcut (note: `launchFlags` is declared twice in the original) |
+| `LE_VOICE_INTENT` | `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;launchFlags=0x10000000;package=com.lenovo.menu_assistant;component=com.lenovo.menu_assistant/.MainEntryActivity;end` | Lenovo Xiaotian (天) voice assistant |
+| `WALLET_INTENT` | `intent:#Intent;action=com.motorola.cn.wallet.USECARD;package=com.motorola.cn.wallet;end` | Moto China Wallet — `USECARD` action |
+
+#### Internal MyKey defaults and dialogs
+
+These are the intents MyKey writes into the settings DB at first run or as fallback when the user's chosen action is unavailable. **Generally not user-set** — they're what you see if you `settings get system ...` on a fresh device.
+
+| Constant | Value | When MyKey uses it |
+|---|---|---|
+| `DEFAULT_LONG_PRESS_VALUE` | `intent:#Intent;action=com.motorola.mykey.action.MY_KEY_SETTINGS;launchFlags=0x10000000;package=com.motorola.mykey;end` | The default long-press value before any user override — opens MyKey settings. (On non-Fuji/non-Japan devices the long-press handler returns early anyway, so this never fires; the value still sits in the DB.) |
+| `FIRST_TIME_DEFAULT_VALUE` | `intent:#Intent;action=com.motorola.mykey.action.MY_KEY_INTRODUCTION_DIALOG;launchFlags=0x10000000;package=com.motorola.mykey;end` | Fired on first AI Key press before the user has configured anything — shows the intro dialog. |
+| `FIRST_TIME_DEFAULT_VALUE_MAIN_PRC` | _(identical to `FIRST_TIME_DEFAULT_VALUE`)_ | PRC-build alias of the above |
+| `FIRST_TIME_DEFAULT_VALUE_QUICK_ROW` | _(identical to `FIRST_TIME_DEFAULT_VALUE`)_ | Quick-row UI alias |
+| `FIRST_TIME_DEFAULT_VALUE_OLD` | `intent:#Intent;action=com.motorola.cn.mykey.action.MY_KEY_INTRODUCTION_DIALOG;launchFlags=0x10000000;package=com.motorola.cn.mykey;end` | China legacy MyKey build's intro dialog |
+| `NONE_REMINDER_INTENT_OLD` | `intent:#Intent;action=com.motorola.cn.mykey.action.NONE_REMINDER_DIALOG;launchFlags=0x10000000;package=com.motorola.cn.mykey;component=com.motorola.cn.mykey/.activity.NoneReminderDialogActivity;end` | China legacy: shows a "you have no action set" reminder. Newer builds just store `"0"`. |
+| `MDM_DISABLE_RED_KEY_INTENT_VALUE` | `intent:#Intent;action=com.motorola.mykey.action.MDM_DISABLE_RED_KEY;launchFlags=0x10000000;package=com.motorola.mykey;end` | Written by MyKey when MDM has disabled the AI Key — opens an "AI Key disabled by your organisation" dialog. |
+
+#### Broadcast actions and package constants
+
+Reference-only; not values you store in `tap_app_quick_*`.
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `PTT_INTENT` | `android.intent.action.PTT` | Action MyKey broadcasts when PTT mode is active and the AI Key is held (key-down / key-up). Receiver must declare a matching intent-filter. |
+| `MOTO_CAMERA_PACKAGE` | `com.motorola.camera3` | — |
+| `MOTO_CAMERA_PACKAGE5` | `com.motorola.camera5` | — |
+| `MOTO_PACKAGE` | `com.motorola.moto` | — |
+| `PAY_ATTENTION_PACKAGE` | `com.motorola.journal` | — |
+| `READYFOR_PACKAGE` | `com.motorola.mobiledesktop` | — |
+| `ENTERPRISE_PACKAGE` | `com.motorola.android.enterpriseinternal` | — |
+| `EXPERIENCE_HU_PACKAGE` | `com.motorola.systemui.desk` | Ready For / desktop UI host |
+| `GOOGLE_WALLET_PACKAGE` | `com.google.android.apps.walletnfcrel` | — |
+| `GOOGLE_WALLET_PACKAGE_GPAY` | `com.google.android.apps.nbu.paisa.user` | Google Pay India |
+| `ALI_PAY_PACKAGE` | `com.eg.android.AlipayGphone` | — |
+| `AMAP_PACKAGE` | `com.autonavi.minimap` | — |
+| `WECHAT_PACKAGE` | `com.tencent.mm` | — |
+| `WALLET_PACKAGE` | `com.motorola.cn.wallet` | Moto China Wallet |
+| `XIAOTIAN_PACKAGE` | `com.lenovo.menu_assistant` | Lenovo voice assistant |
+
+#### Store fallback links
+
+Used by MyKey when the target app isn't installed and it wants to offer "Install via Le-Store / Play Store" — not dispatched as gesture actions.
+
+| Constant | Value |
+|---|---|
+| `MOTO_PLAY_STORE_LINK` | `market://details?id=com.motorola.moto` |
+| `ALI_PAY_LE_STORE_LINK` | `leapp://ptn/appinfo.do?packagename=com.eg.android.AlipayGphone&versioncode=0` |
+| `AMAP_LE_STORE_LINK` | `leapp://ptn/appinfo.do?packagename=com.autonavi.minimap&versioncode=0` |
+| `WE_CHAT_LE_STORE_LINK` | `leapp://ptn/appinfo.do?packagename=com.tencent.mm&versioncode=0` |
 
 Restore with `./mykey_backup.sh`.
 
